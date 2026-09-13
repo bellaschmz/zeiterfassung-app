@@ -14,57 +14,60 @@
 </head>
 <body>
 
-<h1>Zeiterfassung – Anmeldung</h1>
+<h1>Zeiterfassung Bereitschaftsdienst</h1>
 
-<div id="auth-bereich">
-  <input type="email" id="email" placeholder="E-Mail">
-  <input type="password" id="passwort" placeholder="Passwort">
-  <br><br>
-  <button onclick="registrieren()">Registrieren</button>
-  <button onclick="anmelden()">Anmelden</button>
-  <p id="status"></p>
+<div id="passwort-bereich">
+  <input type="password" id="seiten-passwort" placeholder="Passwort">
+  <button onclick="pruefePasswort()">Los</button>
+  <p id="passwort-status"></p>
 </div>
 
 <div id="app-bereich" style="display:none;">
-  <p>Angemeldet als <span id="user-email"></span></p>
-  <button onclick="abmelden()">Abmelden</button>
 
-  <hr>
+  <h2>Wer bin ich?</h2>
+  <select id="dienstgruppe-auswahl">
+    <option value="1">1. Dienst</option>
+    <option value="2">2. Dienst</option>
+    <option value="3">3. Dienst</option>
+  </select>
 
   <h2>Zeiterfassung</h2>
-
   <select id="bereich-auswahl">
     <option value="">Bereich wählen...</option>
   </select>
   <br><br>
-
   <button id="start-btn" onclick="starteErfassung()">Start</button>
   <button id="stop-btn" onclick="stoppeErfassung()" disabled>Stop</button>
-
   <p id="erfassung-status"></p>
 
   <h3>Manuell nachtragen / korrigieren</h3>
+  <select id="dienstgruppe-manuell">
+    <option value="1">1. Dienst</option>
+    <option value="2">2. Dienst</option>
+    <option value="3">3. Dienst</option>
+  </select>
   <select id="bereich-manuell"></select><br><br>
   Beginn: <input type="datetime-local" id="manuell-start"><br><br>
   Ende: <input type="datetime-local" id="manuell-ende"><br><br>
   <button onclick="manuellSpeichern()">Manuell speichern</button>
   <p id="manuell-status"></p>
 
-<h3>Meine bisherigen Einträge</h3>
-<button onclick="exportiereExcel()">Als Excel exportieren</button>
-<table id="verlauf-tabelle" border="1" cellpadding="6">
-  <thead>
-    <tr>
-      <th>Datum</th>
-      <th>Bereich</th>
-      <th>Start</th>
-      <th>Ende</th>
-      <th>Dauer</th>
-      <th>Aktion</th>
-    </tr>
-  </thead>
-  <tbody id="verlauf-body"></tbody>
-</table>
+  <h3>Bisherige Einträge</h3>
+  <button onclick="exportiereExcel()">Als Excel exportieren</button>
+  <table id="verlauf-tabelle" border="1" cellpadding="6">
+    <thead>
+      <tr>
+        <th>Dienst</th>
+        <th>Datum</th>
+        <th>Bereich</th>
+        <th>Start</th>
+        <th>Ende</th>
+        <th>Dauer</th>
+        <th>Aktion</th>
+      </tr>
+    </thead>
+    <tbody id="verlauf-body"></tbody>
+  </table>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -73,39 +76,23 @@
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFmZmJ1aXdic2F0YmJscGJkaWFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkwNDQzMTksImV4cCI6MjEwNDYyMDMxOX0.-tK3hqu6ecwjcSvF0_70XZq-f42mDELzpRzASlkLeEI";
   const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  async function registrieren() {
-    const email = document.getElementById('email').value;
-    const passwort = document.getElementById('passwort').value;
-    const { data, error } = await supabaseClient.auth.signUp({ email, password: passwort });
-    document.getElementById('status').innerText = error ? error.message : "Registriert! Bitte E-Mail bestätigen, dann anmelden.";
-  }
+  const SEITEN_PASSWORT = "ciao24hdienst";
 
-  async function anmelden() {
-    const email = document.getElementById('email').value;
-    const passwort = document.getElementById('passwort').value;
-    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password: passwort });
-    if (error) {
-      document.getElementById('status').innerText = error.message;
+  function pruefePasswort() {
+    const eingabe = document.getElementById('seiten-passwort').value;
+    if (eingabe === SEITEN_PASSWORT) {
+      document.getElementById('passwort-bereich').style.display = 'none';
+      document.getElementById('app-bereich').style.display = 'block';
+      ladeBereiche();
+      ladeVerlauf();
     } else {
-      zeigeAppBereich(data.user);
+      document.getElementById('passwort-status').innerText = 'Falsches Passwort.';
     }
   }
 
-  async function abmelden() {
-    await supabaseClient.auth.signOut();
-    document.getElementById('auth-bereich').style.display = 'block';
-    document.getElementById('app-bereich').style.display = 'none';
-  }
-
-function zeigeAppBereich(user) {
-  document.getElementById('auth-bereich').style.display = 'none';
-  document.getElementById('app-bereich').style.display = 'block';
-  document.getElementById('user-email').innerText = user.email;
-  ladeBereiche();
-  ladeVerlauf();
-}
-
   let laufenderEintrag = null;
+  let bearbeitungsId = null;
+  let aktuelleEintraege = [];
 
   async function ladeBereiche() {
     const { data, error } = await supabaseClient.from('work_areas').select('*').order('id');
@@ -127,20 +114,21 @@ function zeigeAppBereich(user) {
 
   function starteErfassung() {
     const bereichId = document.getElementById('bereich-auswahl').value;
+    const dienstgruppe = document.getElementById('dienstgruppe-auswahl').value;
     if (!bereichId) { alert('Bitte zuerst einen Arbeitsbereich auswählen.'); return; }
-    laufenderEintrag = { bereichId, start: new Date() };
+    laufenderEintrag = { bereichId, dienstgruppe, start: new Date() };
     document.getElementById('start-btn').disabled = true;
     document.getElementById('stop-btn').disabled = false;
     document.getElementById('bereich-auswahl').disabled = true;
+    document.getElementById('dienstgruppe-auswahl').disabled = true;
     document.getElementById('erfassung-status').innerText = 'Läuft seit ' + laufenderEintrag.start.toLocaleTimeString();
   }
 
   async function stoppeErfassung() {
     if (!laufenderEintrag) return;
-    const { data: { user } } = await supabaseClient.auth.getUser();
     const { error } = await supabaseClient.from('time_entries').insert({
-      user_id: user.id,
       work_area_id: laufenderEintrag.bereichId,
+      dienstgruppe: laufenderEintrag.dienstgruppe,
       start_time: laufenderEintrag.start.toISOString(),
       end_time: new Date().toISOString(),
       is_manual_correction: false
@@ -150,134 +138,124 @@ function zeigeAppBereich(user) {
     document.getElementById('start-btn').disabled = false;
     document.getElementById('stop-btn').disabled = true;
     document.getElementById('bereich-auswahl').disabled = false;
-    document.getElementById('bereich-auswahl').disabled = false;
-ladeVerlauf();
+    document.getElementById('dienstgruppe-auswahl').disabled = false;
+    ladeVerlauf();
   }
 
   async function manuellSpeichern() {
-  const bereichId = document.getElementById('bereich-manuell').value;
-  const start = document.getElementById('manuell-start').value;
-  const ende = document.getElementById('manuell-ende').value;
-  const { data: { user } } = await supabaseClient.auth.getUser();
+    const bereichId = document.getElementById('bereich-manuell').value;
+    const dienstgruppe = document.getElementById('dienstgruppe-manuell').value;
+    const start = document.getElementById('manuell-start').value;
+    const ende = document.getElementById('manuell-ende').value;
 
-  if (!bereichId || !start || !ende) {
-    document.getElementById('manuell-status').innerText = 'Bitte alle Felder ausfüllen.';
-    return;
+    if (!bereichId || !start || !ende) {
+      document.getElementById('manuell-status').innerText = 'Bitte alle Felder ausfüllen.';
+      return;
+    }
+
+    if (bearbeitungsId) {
+      const bestaetigt = confirm('Änderungen an diesem bestehenden Eintrag wirklich speichern?');
+      if (!bestaetigt) return;
+
+      const { error } = await supabaseClient.from('time_entries').update({
+        work_area_id: bereichId,
+        dienstgruppe: dienstgruppe,
+        start_time: new Date(start).toISOString(),
+        end_time: new Date(ende).toISOString(),
+        is_manual_correction: true
+      }).eq('id', bearbeitungsId);
+
+      document.getElementById('manuell-status').innerText = error ? ('Fehler: ' + error.message) : 'Änderung gespeichert!';
+      bearbeitungsId = null;
+    } else {
+      const { error } = await supabaseClient.from('time_entries').insert({
+        work_area_id: bereichId,
+        dienstgruppe: dienstgruppe,
+        start_time: new Date(start).toISOString(),
+        end_time: new Date(ende).toISOString(),
+        is_manual_correction: true
+      });
+
+      document.getElementById('manuell-status').innerText = error ? ('Fehler: ' + error.message) : 'Gespeichert!';
+    }
+
+    ladeVerlauf();
   }
 
-  if (bearbeitungsId) {
-    const bestaetigt = confirm('Änderungen an diesem bestehenden Eintrag wirklich speichern?');
+  async function loescheEintrag(id) {
+    const bestaetigt = confirm('Diesen Eintrag wirklich unwiderruflich löschen?');
     if (!bestaetigt) return;
-
-    const { error } = await supabaseClient.from('time_entries').update({
-      work_area_id: bereichId,
-      start_time: new Date(start).toISOString(),
-      end_time: new Date(ende).toISOString(),
-      is_manual_correction: true
-    }).eq('id', bearbeitungsId);
-
-    document.getElementById('manuell-status').innerText = error ? ('Fehler: ' + error.message) : 'Änderung gespeichert!';
-    bearbeitungsId = null;
-  } else {
-    const { error } = await supabaseClient.from('time_entries').insert({
-      user_id: user.id,
-      work_area_id: bereichId,
-      start_time: new Date(start).toISOString(),
-      end_time: new Date(ende).toISOString(),
-      is_manual_correction: true
-    });
-
-    document.getElementById('manuell-status').innerText = error ? ('Fehler: ' + error.message) : 'Gespeichert!';
+    const { error } = await supabaseClient.from('time_entries').delete().eq('id', id);
+    if (error) { alert('Fehler beim Löschen: ' + error.message); } else { ladeVerlauf(); }
   }
 
-  ladeVerlauf();
+  function starteBearbeitung(id, bereichId, dienstgruppe, start, ende) {
+    bearbeitungsId = id;
+    document.getElementById('bereich-manuell').value = bereichId;
+    document.getElementById('dienstgruppe-manuell').value = dienstgruppe;
+    document.getElementById('manuell-start').value = start ? start.slice(0, 16) : '';
+    document.getElementById('manuell-ende').value = ende ? ende.slice(0, 16) : '';
+    document.getElementById('manuell-status').innerText = 'Bearbeite bestehenden Eintrag – "Manuell speichern" klicken, um Änderungen zu übernehmen.';
   }
 
   async function ladeVerlauf() {
-  const { data, error } = await supabaseClient
-    .from('time_entries')
-    .select('*, work_areas(name)')
-    .order('start_time', { ascending: false });
+    const { data, error } = await supabaseClient
+      .from('time_entries')
+      .select('*, work_areas(name)')
+      .order('start_time', { ascending: false });
 
-  if (error) { console.error(error); return; }
-  aktuelleEintraege = data;
+    if (error) { console.error(error); return; }
+    aktuelleEintraege = data;
 
-  const body = document.getElementById('verlauf-body');
-  body.innerHTML = '';
+    const body = document.getElementById('verlauf-body');
+    body.innerHTML = '';
 
-  data.forEach(eintrag => {
-    const start = new Date(eintrag.start_time);
-    const ende = eintrag.end_time ? new Date(eintrag.end_time) : null;
-    const dauerMin = ende ? Math.round((ende - start) / 60000) : '-';
+    data.forEach(eintrag => {
+      const start = new Date(eintrag.start_time);
+      const ende = eintrag.end_time ? new Date(eintrag.end_time) : null;
+      const dauerMin = ende ? Math.round((ende - start) / 60000) : '-';
 
-    const zeile = document.createElement('tr');
-    zeile.innerHTML = `
-      <td>${start.toLocaleDateString('de-DE')}</td>
-      <td>${eintrag.work_areas ? eintrag.work_areas.name : '-'}</td>
-      <td>${start.toLocaleTimeString('de-DE')}</td>
-      <td>${ende ? ende.toLocaleTimeString('de-DE') : '-'}</td>
-      <td>${dauerMin} min</td>
-      <td>
-        <button onclick="starteBearbeitung('${eintrag.id}', ${eintrag.work_area_id}, '${eintrag.start_time}', '${eintrag.end_time || ''}')">Bearbeiten</button>
-        <button onclick="loescheEintrag('${eintrag.id}')">Löschen</button>
-      <td>  
-    `;
-    body.appendChild(zeile);
-  });
-}
-let bearbeitungsId = null;
-
-async function loescheEintrag(id) {
-  const bestaetigt = confirm('Diesen Eintrag wirklich unwiderruflich löschen?');
-  if (!bestaetigt) return;
-
-  const { error } = await supabaseClient.from('time_entries').delete().eq('id', id);
-  if (error) {
-    alert('Fehler beim Löschen: ' + error.message);
-  } else {
-    ladeVerlauf();
-  }
-}
-
-function starteBearbeitung(id, bereichId, start, ende) {
-  bearbeitungsId = id;
-  document.getElementById('bereich-manuell').value = bereichId;
-  document.getElementById('manuell-start').value = start ? start.slice(0, 16) : '';
-  document.getElementById('manuell-ende').value = ende ? ende.slice(0, 16) : '';
-  document.getElementById('manuell-status').innerText = 'Bearbeite bestehenden Eintrag – "Manuell speichern" klicken, um Änderungen zu übernehmen.';
-}
-  supabaseClient.auth.getSession().then(({ data }) => {
-    if (data.session) zeigeAppBereich(data.session.user);
-  });
-
-  let aktuelleEintraege = []; // merkt sich die zuletzt geladenen Einträge für den Export
-
-async function exportiereExcel() {
-  if (aktuelleEintraege.length === 0) {
-    alert('Keine Einträge zum Exportieren vorhanden.');
-    return;
+      const zeile = document.createElement('tr');
+      zeile.innerHTML = `
+        <td>${eintrag.dienstgruppe}. Dienst</td>
+        <td>${start.toLocaleDateString('de-DE')}</td>
+        <td>${eintrag.work_areas ? eintrag.work_areas.name : '-'}</td>
+        <td>${start.toLocaleTimeString('de-DE')}</td>
+        <td>${ende ? ende.toLocaleTimeString('de-DE') : '-'}</td>
+        <td>${dauerMin} min</td>
+        <td>
+          <button onclick="starteBearbeitung('${eintrag.id}', ${eintrag.work_area_id}, '${eintrag.dienstgruppe}', '${eintrag.start_time}', '${eintrag.end_time || ''}')">Bearbeiten</button>
+          <button onclick="loescheEintrag('${eintrag.id}')">Löschen</button>
+        </td>
+      `;
+      body.appendChild(zeile);
+    });
   }
 
-  const exportDaten = aktuelleEintraege.map(eintrag => {
-    const start = new Date(eintrag.start_time);
-    const ende = eintrag.end_time ? new Date(eintrag.end_time) : null;
-    const dauerMin = ende ? Math.round((ende - start) / 60000) : '';
-
-    return {
-      Datum: start.toLocaleDateString('de-DE'),
-      Bereich: eintrag.work_areas ? eintrag.work_areas.name : '',
-      Start: start.toLocaleTimeString('de-DE'),
-      Ende: ende ? ende.toLocaleTimeString('de-DE') : '',
-      'Dauer (min)': dauerMin,
-      'Manuell korrigiert': eintrag.is_manual_correction ? 'Ja' : 'Nein'
-    };
-  });
-
-  const arbeitsblatt = XLSX.utils.json_to_sheet(exportDaten);
-  const arbeitsmappe = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(arbeitsmappe, arbeitsblatt, 'Zeiterfassung');
-  XLSX.writeFile(arbeitsmappe, 'zeiterfassung.xlsx');
-}
+  async function exportiereExcel() {
+    if (aktuelleEintraege.length === 0) {
+      alert('Keine Einträge zum Exportieren vorhanden.');
+      return;
+    }
+    const exportDaten = aktuelleEintraege.map(eintrag => {
+      const start = new Date(eintrag.start_time);
+      const ende = eintrag.end_time ? new Date(eintrag.end_time) : null;
+      const dauerMin = ende ? Math.round((ende - start) / 60000) : '';
+      return {
+        Dienst: eintrag.dienstgruppe,
+        Datum: start.toLocaleDateString('de-DE'),
+        Bereich: eintrag.work_areas ? eintrag.work_areas.name : '',
+        Start: start.toLocaleTimeString('de-DE'),
+        Ende: ende ? ende.toLocaleTimeString('de-DE') : '',
+        'Dauer (min)': dauerMin,
+        'Manuell korrigiert': eintrag.is_manual_correction ? 'Ja' : 'Nein'
+      };
+    });
+    const arbeitsblatt = XLSX.utils.json_to_sheet(exportDaten);
+    const arbeitsmappe = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(arbeitsmappe, arbeitsblatt, 'Zeiterfassung');
+    XLSX.writeFile(arbeitsmappe, 'zeiterfassung.xlsx');
+  }
 </script>
 
 </body>
