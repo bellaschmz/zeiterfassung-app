@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zeiterfassung Bereitschaftsdienst</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <link rel="manifest" href="manifest.json">
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</head>
+<body>
+
+<h1>Zeiterfassung – Anmeldung</h1>
+
+<div id="auth-bereich">
+  <input type="email" id="email" placeholder="E-Mail">
+  <input type="password" id="passwort" placeholder="Passwort">
+  <br><br>
+  <button onclick="registrieren()">Registrieren</button>
+  <button onclick="anmelden()">Anmelden</button>
+  <p id="status"></p>
+</div>
+
+<div id="app-bereich" style="display:none;">
+  <p>Angemeldet als <span id="user-email"></span></p>
+  <button onclick="abmelden()">Abmelden</button>
+
+  <hr>
+
+  <h2>Zeiterfassung</h2>
+
+  <select id="bereich-auswahl">
+    <option value="">Bereich wählen...</option>
+  </select>
+  <br><br>
+
+  <button id="start-btn" onclick="starteErfassung()">Start</button>
+  <button id="stop-btn" onclick="stoppeErfassung()" disabled>Stop</button>
+
+  <p id="erfassung-status"></p>
+
+  <h3>Manuell nachtragen / korrigieren</h3>
+  <select id="bereich-manuell"></select><br><br>
+  Beginn: <input type="datetime-local" id="manuell-start"><br><br>
+  Ende: <input type="datetime-local" id="manuell-ende"><br><br>
+  <button onclick="manuellSpeichern()">Manuell speichern</button>
+  <p id="manuell-status"></p>
+
+<h3>Meine bisherigen Einträge</h3>
+<button onclick="exportiereExcel()">Als Excel exportieren</button>
+<table id="verlauf-tabelle" border="1" cellpadding="6">
+  <thead>
+    <tr>
+      <th>Datum</th>
+      <th>Bereich</th>
+      <th>Start</th>
+      <th>Ende</th>
+      <th>Dauer</th>
+    </tr>
+  </thead>
+  <tbody id="verlauf-body"></tbody>
+</table>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL = "https://affbuiwbsatbblpbdiak.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFmZmJ1aXdic2F0YmJscGJkaWFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkwNDQzMTksImV4cCI6MjEwNDYyMDMxOX0.-tK3hqu6ecwjcSvF0_70XZq-f42mDELzpRzASlkLeEI";
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  async function registrieren() {
+    const email = document.getElementById('email').value;
+    const passwort = document.getElementById('passwort').value;
+    const { data, error } = await supabaseClient.auth.signUp({ email, password: passwort });
+    document.getElementById('status').innerText = error ? error.message : "Registriert! Bitte E-Mail bestätigen, dann anmelden.";
+  }
+
+  async function anmelden() {
+    const email = document.getElementById('email').value;
+    const passwort = document.getElementById('passwort').value;
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password: passwort });
+    if (error) {
+      document.getElementById('status').innerText = error.message;
+    } else {
+      zeigeAppBereich(data.user);
+    }
+  }
+
+  async function abmelden() {
+    await supabaseClient.auth.signOut();
+    document.getElementById('auth-bereich').style.display = 'block';
+    document.getElementById('app-bereich').style.display = 'none';
+  }
+
+function zeigeAppBereich(user) {
+  document.getElementById('auth-bereich').style.display = 'none';
+  document.getElementById('app-bereich').style.display = 'block';
+  document.getElementById('user-email').innerText = user.email;
+  ladeBereiche();
+  ladeVerlauf();
+}
+
+  let laufenderEintrag = null;
+
+  async function ladeBereiche() {
+    const { data, error } = await supabaseClient.from('work_areas').select('*').order('id');
+    if (error) { console.error(error); return; }
+    const auswahl = document.getElementById('bereich-auswahl');
+    const manuell = document.getElementById('bereich-manuell');
+    data.forEach(bereich => {
+      const option1 = document.createElement('option');
+      option1.value = bereich.id;
+      option1.textContent = bereich.name;
+      auswahl.appendChild(option1);
+
+      const option2 = document.createElement('option');
+      option2.value = bereich.id;
+      option2.textContent = bereich.name;
+      manuell.appendChild(option2);
+    });
+  }
+
+  function starteErfassung() {
+    const bereichId = document.getElementById('bereich-auswahl').value;
+    if (!bereichId) { alert('Bitte zuerst einen Arbeitsbereich auswählen.'); return; }
+    laufenderEintrag = { bereichId, start: new Date() };
+    document.getElementById('start-btn').disabled = true;
+    document.getElementById('stop-btn').disabled = false;
+    document.getElementById('bereich-auswahl').disabled = true;
+    document.getElementById('erfassung-status').innerText = 'Läuft seit ' + laufenderEintrag.start.toLocaleTimeString();
+  }
+
+  async function stoppeErfassung() {
+    if (!laufenderEintrag) return;
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    const { error } = await supabaseClient.from('time_entries').insert({
+      user_id: user.id,
+      work_area_id: laufenderEintrag.bereichId,
+      start_time: laufenderEintrag.start.toISOString(),
+      end_time: new Date().toISOString(),
+      is_manual_correction: false
+    });
+    document.getElementById('erfassung-status').innerText = error ? ('Fehler: ' + error.message) : 'Gespeichert!';
+    laufenderEintrag = null;
+    document.getElementById('start-btn').disabled = false;
+    document.getElementById('stop-btn').disabled = true;
+    document.getElementById('bereich-auswahl').disabled = false;
+    document.getElementById('bereich-auswahl').disabled = false;
+ladeVerlauf();
+  }
+
+  async function manuellSpeichern() {
+    const bereichId = document.getElementById('bereich-manuell').value;
+    const start = document.getElementById('manuell-start').value;
+    const ende = document.getElementById('manuell-ende').value;
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!bereichId || !start || !ende) {
+      document.getElementById('manuell-status').innerText = 'Bitte alle Felder ausfüllen.';
+      return;
+    }
+    const { error } = await supabaseClient.from('time_entries').insert({
+      user_id: user.id,
+      work_area_id: bereichId,
+      start_time: new Date(start).toISOString(),
+      end_time: new Date(ende).toISOString(),
+      is_manual_correction: true
+    });
+    document.getElementById('manuell-status').innerText = error ? ('Fehler: ' + error.message) : 'Gespeichert!';
+    document.getElementById('manuell-status').innerText = error ? ('Fehler: ' + error.message) : 'Gespeichert!';
+ladeVerlauf();
+  }
+
+  async function ladeVerlauf() {
+  const { data, error } = await supabaseClient
+    .from('time_entries')
+    .select('*, work_areas(name)')
+    .order('start_time', { ascending: false });
+
+  if (error) { console.error(error); return; }
+  aktuelleEintraege = data;
+
+  const body = document.getElementById('verlauf-body');
+  body.innerHTML = '';
+
+  data.forEach(eintrag => {
+    const start = new Date(eintrag.start_time);
+    const ende = eintrag.end_time ? new Date(eintrag.end_time) : null;
+    const dauerMin = ende ? Math.round((ende - start) / 60000) : '-';
+
+    const zeile = document.createElement('tr');
+    zeile.innerHTML = `
+      <td>${start.toLocaleDateString('de-DE')}</td>
+      <td>${eintrag.work_areas ? eintrag.work_areas.name : '-'}</td>
+      <td>${start.toLocaleTimeString('de-DE')}</td>
+      <td>${ende ? ende.toLocaleTimeString('de-DE') : '-'}</td>
+      <td>${dauerMin} min</td>
+    `;
+    body.appendChild(zeile);
+  });
+}
+
+  supabaseClient.auth.getSession().then(({ data }) => {
+    if (data.session) zeigeAppBereich(data.session.user);
+  });
+
+  let aktuelleEintraege = []; // merkt sich die zuletzt geladenen Einträge für den Export
+
+async function exportiereExcel() {
+  if (aktuelleEintraege.length === 0) {
+    alert('Keine Einträge zum Exportieren vorhanden.');
+    return;
+  }
+
+  const exportDaten = aktuelleEintraege.map(eintrag => {
+    const start = new Date(eintrag.start_time);
+    const ende = eintrag.end_time ? new Date(eintrag.end_time) : null;
+    const dauerMin = ende ? Math.round((ende - start) / 60000) : '';
+
+    return {
+      Datum: start.toLocaleDateString('de-DE'),
+      Bereich: eintrag.work_areas ? eintrag.work_areas.name : '',
+      Start: start.toLocaleTimeString('de-DE'),
+      Ende: ende ? ende.toLocaleTimeString('de-DE') : '',
+      'Dauer (min)': dauerMin,
+      'Manuell korrigiert': eintrag.is_manual_correction ? 'Ja' : 'Nein'
+    };
+  });
+
+  const arbeitsblatt = XLSX.utils.json_to_sheet(exportDaten);
+  const arbeitsmappe = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(arbeitsmappe, arbeitsblatt, 'Zeiterfassung');
+  XLSX.writeFile(arbeitsmappe, 'zeiterfassung.xlsx');
+}
+</script>
+
+</body>
+</html>
