@@ -60,6 +60,7 @@
       <th>Start</th>
       <th>Ende</th>
       <th>Dauer</th>
+      <th>Aktion</th>
     </tr>
   </thead>
   <tbody id="verlauf-body"></tbody>
@@ -154,14 +155,30 @@ ladeVerlauf();
   }
 
   async function manuellSpeichern() {
-    const bereichId = document.getElementById('bereich-manuell').value;
-    const start = document.getElementById('manuell-start').value;
-    const ende = document.getElementById('manuell-ende').value;
-    const { data: { user } } = await supabaseClient.auth.getUser();
-    if (!bereichId || !start || !ende) {
-      document.getElementById('manuell-status').innerText = 'Bitte alle Felder ausfüllen.';
-      return;
-    }
+  const bereichId = document.getElementById('bereich-manuell').value;
+  const start = document.getElementById('manuell-start').value;
+  const ende = document.getElementById('manuell-ende').value;
+  const { data: { user } } = await supabaseClient.auth.getUser();
+
+  if (!bereichId || !start || !ende) {
+    document.getElementById('manuell-status').innerText = 'Bitte alle Felder ausfüllen.';
+    return;
+  }
+
+  if (bearbeitungsId) {
+    const bestaetigt = confirm('Änderungen an diesem bestehenden Eintrag wirklich speichern?');
+    if (!bestaetigt) return;
+
+    const { error } = await supabaseClient.from('time_entries').update({
+      work_area_id: bereichId,
+      start_time: new Date(start).toISOString(),
+      end_time: new Date(ende).toISOString(),
+      is_manual_correction: true
+    }).eq('id', bearbeitungsId);
+
+    document.getElementById('manuell-status').innerText = error ? ('Fehler: ' + error.message) : 'Änderung gespeichert!';
+    bearbeitungsId = null;
+  } else {
     const { error } = await supabaseClient.from('time_entries').insert({
       user_id: user.id,
       work_area_id: bereichId,
@@ -169,9 +186,11 @@ ladeVerlauf();
       end_time: new Date(ende).toISOString(),
       is_manual_correction: true
     });
+
     document.getElementById('manuell-status').innerText = error ? ('Fehler: ' + error.message) : 'Gespeichert!';
-    document.getElementById('manuell-status').innerText = error ? ('Fehler: ' + error.message) : 'Gespeichert!';
-ladeVerlauf();
+  }
+
+  ladeVerlauf();
   }
 
   async function ladeVerlauf() {
@@ -198,11 +217,35 @@ ladeVerlauf();
       <td>${start.toLocaleTimeString('de-DE')}</td>
       <td>${ende ? ende.toLocaleTimeString('de-DE') : '-'}</td>
       <td>${dauerMin} min</td>
+      <td>
+        <button onclick="starteBearbeitung('${eintrag.id}', ${eintrag.work_area_id}, '${eintrag.start_time}', '${eintrag.end_time || ''}')">Bearbeiten</button>
+        <button onclick="loescheEintrag('${eintrag.id}')">Löschen</button>
+      <td>  
     `;
     body.appendChild(zeile);
   });
 }
+let bearbeitungsId = null;
 
+async function loescheEintrag(id) {
+  const bestaetigt = confirm('Diesen Eintrag wirklich unwiderruflich löschen?');
+  if (!bestaetigt) return;
+
+  const { error } = await supabaseClient.from('time_entries').delete().eq('id', id);
+  if (error) {
+    alert('Fehler beim Löschen: ' + error.message);
+  } else {
+    ladeVerlauf();
+  }
+}
+
+function starteBearbeitung(id, bereichId, start, ende) {
+  bearbeitungsId = id;
+  document.getElementById('bereich-manuell').value = bereichId;
+  document.getElementById('manuell-start').value = start ? start.slice(0, 16) : '';
+  document.getElementById('manuell-ende').value = ende ? ende.slice(0, 16) : '';
+  document.getElementById('manuell-status').innerText = 'Bearbeite bestehenden Eintrag – "Manuell speichern" klicken, um Änderungen zu übernehmen.';
+}
   supabaseClient.auth.getSession().then(({ data }) => {
     if (data.session) zeigeAppBereich(data.session.user);
   });
